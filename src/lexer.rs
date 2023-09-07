@@ -16,7 +16,9 @@ pub enum Token {
     IntLiteral { value: i64 },
     StringLiteral { value: String },
     LessThan,
+    LessOrEqualThan,
     GreaterThan,
+    GreaterOrEqualThan,
     Plus,
     Minus,
     Star,
@@ -83,8 +85,20 @@ impl<T: Iterator<Item = char>> Iterator for Lexer<T> {
             ')' => Some(Token::CloseParen),
             '{' => Some(Token::OpenCurly),
             '}' => Some(Token::CloseCurly),
-            '<' => Some(Token::LessThan),
-            '>' => Some(Token::GreaterThan),
+            '<' => Some(match self.inner.peek() {
+                Some(&'=') => {
+                    self.inner.next();
+                    Token::LessOrEqualThan
+                }
+                _ => Token::LessThan,
+            }),
+            '>' => Some(match self.inner.peek() {
+                Some(&'=') => {
+                    self.inner.next();
+                    Token::GreaterOrEqualThan
+                }
+                _ => Token::GreaterThan,
+            }),
             '+' => Some(Token::Plus),
             '-' => Some(Token::Minus),
             ';' => Some(Token::Semicolon),
