@@ -25,7 +25,7 @@ fn main() -> Result<()> {
         .bytes()
         .map(|x| x.expect("invalid byte in file") as char);
 
-    for token in tokens(iter, cli.file) {
+    for token in tokens(iter, &cli.file) {
         println!("{:?}", token);
     }
 

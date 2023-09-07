@@ -1,6 +1,6 @@
 #[derive(Debug)]
-pub struct Location {
+pub struct Location<'a> {
     pub start: usize,
     pub end: usize,
-    pub filename: String,
+    pub filename: &'a str,
 }

@@ -28,19 +28,19 @@ pub enum TokenType {
 }
 
 #[derive(Debug)]
-pub struct Token {
+pub struct Token<'a> {
     pub value: TokenType,
-    pub location: Location,
+    pub location: Location<'a>,
 }
 
-struct Lexer<T: Iterator<Item = char>> {
-    filename: String,
+struct Lexer<'a, T: Iterator<Item = char>> {
+    filename: &'a str,
     inner: Peekable<T>,
     current_position: usize,
 }
 
-impl<T: Iterator<Item = char>> Iterator for Lexer<T> {
-    type Item = Token;
+impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
+    type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut end = self.current_position;
@@ -166,7 +166,7 @@ impl<T: Iterator<Item = char>> Iterator for Lexer<T> {
                 location: Location {
                     start: self.current_position,
                     end,
-                    filename: self.filename.clone(),
+                    filename: self.filename,
                 },
             };
             self.current_position = end;
@@ -176,7 +176,7 @@ impl<T: Iterator<Item = char>> Iterator for Lexer<T> {
     }
 }
 
-pub fn tokens<T: Iterator<Item = char>>(input: T, filename: String) -> impl Iterator<Item = Token> {
+pub fn tokens<T: Iterator<Item = char>>(input: T, filename: &str) -> impl Iterator<Item = Token> {
     let lexer = Lexer {
         filename,
         inner: input.peekable(),
