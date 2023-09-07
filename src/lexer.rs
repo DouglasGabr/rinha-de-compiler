@@ -2,20 +2,22 @@ use std::iter::Peekable;
 
 use crate::common::Location;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum TokenType {
     Let,
+    Fn,
     If,
     Else,
     Identifier { name: String },
     Equal,
     DoubleEqual,
+    NotEqual,
     ArrowRight,
     OpenCurly,
     CloseCurly,
     OpenParen,
     CloseParen,
-    IntLiteral { value: i64 },
+    IntLiteral { value: i32 },
     StringLiteral { value: String },
     LessThan,
     LessOrEqualThan,
@@ -25,6 +27,8 @@ pub enum TokenType {
     Minus,
     Star,
     Semicolon,
+    BoolLiteral { value: bool },
+    Comma,
 }
 
 #[derive(Debug)]
@@ -33,7 +37,7 @@ pub struct Token<'a> {
     pub location: Location<'a>,
 }
 
-struct Lexer<'a, T: Iterator<Item = char>> {
+pub struct Lexer<'a, T: Iterator<Item = char>> {
     filename: &'a str,
     inner: Peekable<T>,
     current_position: usize,
@@ -71,8 +75,11 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                     end += name.len();
                     match name.as_str() {
                         "let" => TokenType::Let,
+                        "fn" => TokenType::Fn,
                         "if" => TokenType::If,
                         "else" => TokenType::Else,
+                        "true" => TokenType::BoolLiteral { value: true },
+                        "false" => TokenType::BoolLiteral { value: false },
                         _ => TokenType::Identifier { name },
                     }
                 }
@@ -154,6 +161,21 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                 '*' => {
                     end += 1;
                     TokenType::Star
+                }
+                '!' => {
+                    end += 1;
+                    match self.inner.peek() {
+                        Some(&'=') => {
+                            self.inner.next();
+                            end += 1;
+                            TokenType::NotEqual
+                        }
+                        _ => panic!("Expected '=' after '!' in position {}", end),
+                    }
+                }
+                ',' => {
+                    end += 1;
+                    TokenType::Comma
                 }
                 s if s.is_ascii_whitespace() => {
                     self.current_position += 1;

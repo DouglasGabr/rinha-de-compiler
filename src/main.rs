@@ -6,9 +6,11 @@ use std::{
 use anyhow::Result;
 use clap::Parser;
 use lexer::tokens;
+use parser::parse_file;
 
 mod common;
 mod lexer;
+mod parser;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -25,9 +27,8 @@ fn main() -> Result<()> {
         .bytes()
         .map(|x| x.expect("invalid byte in file") as char);
 
-    for token in tokens(iter, &cli.file) {
-        println!("{:?}", token);
-    }
+    let program = parse_file(tokens(iter, &cli.file));
+    println!("{:#?}", program);
 
     return Ok(());
 }
