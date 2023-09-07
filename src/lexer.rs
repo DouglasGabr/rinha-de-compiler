@@ -1,7 +1,9 @@
 use std::iter::Peekable;
 
+use crate::common::Location;
+
 #[derive(Debug)]
-pub enum Token {
+pub enum TokenType {
     Let,
     If,
     Else,
@@ -25,93 +27,160 @@ pub enum Token {
     Semicolon,
 }
 
+#[derive(Debug)]
+pub struct Token {
+    pub value: TokenType,
+    pub location: Location,
+}
+
 struct Lexer<T: Iterator<Item = char>> {
+    filename: String,
     inner: Peekable<T>,
+    current_position: usize,
 }
 
 impl<T: Iterator<Item = char>> Iterator for Lexer<T> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        return self.inner.next().and_then(|c| match c {
-            d if d.is_digit(10) => {
-                let mut value = String::new();
-                value.push(d);
-                while self.inner.peek().filter(|c| c.is_digit(10)).is_some() {
-                    value.push(self.inner.next().unwrap());
+        let mut end = self.current_position;
+        if let Some(c) = self.inner.next() {
+            let value = match c {
+                d if d.is_digit(10) => {
+                    let mut value = String::new();
+                    value.push(d);
+                    while self.inner.peek().filter(|c| c.is_digit(10)).is_some() {
+                        value.push(self.inner.next().unwrap());
+                    }
+                    end += value.len();
+                    TokenType::IntLiteral {
+                        value: value.parse().unwrap(),
+                    }
                 }
-                Some(Token::IntLiteral {
-                    value: value.parse().unwrap(),
-                })
-            }
-            'a'..='z' | 'A'..='Z' | '_' => {
-                let mut name = String::new();
-                name.push(c);
-                while self
-                    .inner
-                    .peek()
-                    .filter(|c| c.is_ascii_alphanumeric() || c == &&'_')
-                    .is_some()
-                {
-                    name.push(self.inner.next().unwrap());
+                'a'..='z' | 'A'..='Z' | '_' => {
+                    let mut name = String::new();
+                    name.push(c);
+                    while self
+                        .inner
+                        .peek()
+                        .filter(|c| c.is_ascii_alphanumeric() || c == &&'_')
+                        .is_some()
+                    {
+                        name.push(self.inner.next().unwrap());
+                    }
+                    end += name.len();
+                    match name.as_str() {
+                        "let" => TokenType::Let,
+                        "if" => TokenType::If,
+                        "else" => TokenType::Else,
+                        _ => TokenType::Identifier { name },
+                    }
                 }
-                Some(match name.as_str() {
-                    "let" => Token::Let,
-                    "if" => Token::If,
-                    "else" => Token::Else,
-                    _ => Token::Identifier { name },
-                })
-            }
-            '"' => {
-                let mut value = String::new();
-                while self.inner.peek().filter(|c| c != &&'"').is_some() {
-                    value.push(self.inner.next().unwrap());
-                }
-                self.inner.next();
-                Some(Token::StringLiteral { value })
-            }
-            '=' => Some(match self.inner.peek() {
-                Some(&'>') => {
+                '"' => {
+                    let mut value = String::new();
+                    while self.inner.peek().filter(|c| c != &&'"').is_some() {
+                        value.push(self.inner.next().unwrap());
+                    }
                     self.inner.next();
-                    Token::ArrowRight
+                    end += value.len() + 2;
+                    TokenType::StringLiteral { value }
                 }
-                Some(&'=') => {
-                    self.inner.next();
-                    Token::DoubleEqual
+                '=' => {
+                    end += 1;
+                    match self.inner.peek() {
+                        Some(&'>') => {
+                            self.inner.next();
+                            end += 1;
+                            TokenType::ArrowRight
+                        }
+                        Some(&'=') => {
+                            self.inner.next();
+                            end += 1;
+                            TokenType::DoubleEqual
+                        }
+                        _ => TokenType::Equal,
+                    }
                 }
-                _ => Token::Equal,
-            }),
-            '(' => Some(Token::OpenParen),
-            ')' => Some(Token::CloseParen),
-            '{' => Some(Token::OpenCurly),
-            '}' => Some(Token::CloseCurly),
-            '<' => Some(match self.inner.peek() {
-                Some(&'=') => {
-                    self.inner.next();
-                    Token::LessOrEqualThan
+                '(' => {
+                    end += 1;
+                    TokenType::OpenParen
                 }
-                _ => Token::LessThan,
-            }),
-            '>' => Some(match self.inner.peek() {
-                Some(&'=') => {
-                    self.inner.next();
-                    Token::GreaterOrEqualThan
+                ')' => {
+                    end += 1;
+                    TokenType::CloseParen
                 }
-                _ => Token::GreaterThan,
-            }),
-            '+' => Some(Token::Plus),
-            '-' => Some(Token::Minus),
-            ';' => Some(Token::Semicolon),
-            '*' => Some(Token::Star),
-            s if s.is_ascii_whitespace() => self.next(),
-            unknown => panic!("Unknown char: {}", unknown),
-        });
+                '{' => {
+                    end += 1;
+                    TokenType::OpenCurly
+                }
+                '}' => {
+                    end += 1;
+                    TokenType::CloseCurly
+                }
+                '<' => {
+                    end += 1;
+                    match self.inner.peek() {
+                        Some(&'=') => {
+                            self.inner.next();
+                            end += 1;
+                            TokenType::LessOrEqualThan
+                        }
+                        _ => TokenType::LessThan,
+                    }
+                }
+                '>' => {
+                    end += 1;
+                    match self.inner.peek() {
+                        Some(&'=') => {
+                            self.inner.next();
+                            end += 1;
+                            TokenType::GreaterOrEqualThan
+                        }
+                        _ => TokenType::GreaterThan,
+                    }
+                }
+                '+' => {
+                    end += 1;
+                    TokenType::Plus
+                }
+                '-' => {
+                    end += 1;
+                    TokenType::Minus
+                }
+                ';' => {
+                    end += 1;
+                    TokenType::Semicolon
+                }
+                '*' => {
+                    end += 1;
+                    TokenType::Star
+                }
+                s if s.is_ascii_whitespace() => {
+                    self.current_position += 1;
+                    return self.next();
+                }
+                unknown => panic!("Unknown char: {}", unknown),
+            };
+            let token = Token {
+                value,
+                location: Location {
+                    start: self.current_position,
+                    end,
+                    filename: self.filename.clone(),
+                },
+            };
+            self.current_position = end;
+            return Some(token);
+        }
+        return None;
     }
 }
 
-pub fn tokens<T: Iterator<Item = char>>(input: T) -> impl Iterator<Item = Token> {
+pub fn tokens<T: Iterator<Item = char>>(input: T, filename: String) -> impl Iterator<Item = Token> {
     let lexer = Lexer {
+        filename,
         inner: input.peekable(),
+        current_position: 0,
     };
     return lexer;
 }

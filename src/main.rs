@@ -7,6 +7,7 @@ use anyhow::Result;
 use clap::Parser;
 use lexer::tokens;
 
+mod common;
 mod lexer;
 
 #[derive(Parser, Debug)]
@@ -18,13 +19,13 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let file = File::open(cli.file)?;
+    let file = File::open(&cli.file)?;
     let reader = BufReader::new(file);
     let iter = reader
         .bytes()
         .map(|x| x.expect("invalid byte in file") as char);
 
-    for token in tokens(iter) {
+    for token in tokens(iter, cli.file) {
         println!("{:?}", token);
     }
 
