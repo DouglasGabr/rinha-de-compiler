@@ -1,8 +1,10 @@
-use std::{borrow::BorrowMut, iter::Peekable};
+use std::iter::Peekable;
+
+use thiserror::Error;
 
 use crate::{
     common::Location,
-    lexer::{Token, TokenType},
+    lexer::{LexerError, Token, TokenType},
 };
 
 #[derive(Debug)]
@@ -93,129 +95,134 @@ pub struct File<'a> {
     location: Location<'a>,
 }
 
-struct Parser<'a, T: Iterator<Item = Token<'a>>> {
+struct Parser<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> {
     tokens: Peekable<T>,
 }
 
-impl<'a, T: Iterator<Item = Token<'a>>> Parser<'a, T> {
-    fn parse(&mut self) -> File<'a> {
-        let term = self.parse_term().expect("File must have at least one term");
+#[derive(Debug, Error)]
+pub enum ParserError {
+    #[error("Unexpected EOF")]
+    UnexpectedEOF,
+    #[error("Lexer error")]
+    LexerError(#[from] LexerError),
+    #[error("Expected token {expected:?} at {location}, got {got:?}")]
+    UnexpectedToken {
+        expected: TokenType,
+        got: TokenType,
+        location: usize,
+    },
+}
+
+impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
+    fn parse_file(&mut self) -> Result<File<'a>, ParserError> {
+        let term = self.parse_term()?;
         let location = term.location.clone();
-        return File {
+        return Ok(File {
             name: location.filename.to_string(),
             expression: term,
             location,
-        };
+        });
     }
 
-    fn expect_optional(&mut self, expected: TokenType) -> Option<Token<'a>> {
-        let token = self.tokens.peek()?;
-        if token.value == expected {
-            return self.tokens.next();
-        }
-        return None;
-    }
-
-    fn expect(&mut self, expected: TokenType) -> Token<'a> {
+    fn parse_term(&mut self) -> Result<Term<'a>, ParserError> {
         let token = self
             .tokens
-            .next()
-            .expect(&format!("token {:?} expected, none found", expected));
-        if token.value != expected {
-            panic!("expected {:?}, got {:?}", expected, token.value);
-        }
-        return token;
-    }
-
-    fn parse_parameter(&mut self) -> Parameter<'a> {
-        let token = self.tokens.next().expect("parameter expected");
-        match token.value {
-            TokenType::Identifier { name } => Parameter {
-                text: name,
-                location: token.location,
-            },
-            unexpected => panic!("unexpected token {:?}", unexpected),
-        }
-    }
-
-    fn parse_term(&mut self) -> Option<Term<'a>> {
-        let token = self.tokens.next()?;
-        match token.value {
+            .peek()
+            .ok_or(ParserError::UnexpectedEOF)?
+            .as_ref()
+            .map_err(|e| ParserError::from(*e))?;
+        match &token.value {
             TokenType::Let => {
-                let name = self.parse_parameter();
-                self.expect(TokenType::Equal);
-                let value = self.parse_term().expect("value expected");
-                let semi = self.expect_optional(TokenType::Semicolon);
-                let next = self.parse_term();
-                let location = token
-                    .location
-                    .with_end(semi.map(|s| s.location.end).unwrap_or(value.location.end));
-                return Some(Term {
+                let location = token.location.clone();
+                self.tokens.next().unwrap().unwrap();
+                let name = self.parse_parameter()?;
+                self.expect_token(TokenType::Equal)?;
+                let value = self.parse_term()?;
+                let semicolon = self.optional_expect_token(TokenType::Semicolon)?;
+                let next = if semicolon.is_some() {
+                    Some(Box::new(self.parse_term()?))
+                } else {
+                    None
+                };
+                let location = location.with_end(
+                    next.as_ref()
+                        .map(|x| x.location.end)
+                        .unwrap_or(value.location.end),
+                );
+                return Ok(Term {
                     value: TermType::Let {
                         name,
                         value: Box::new(value),
-                        next: next.map(Box::new),
+                        next,
                     },
                     location,
                 });
             }
-            TokenType::Fn => {
-                self.expect(TokenType::OpenParen);
-                let mut parameters = Vec::new();
-                while let Some(token) = self.tokens.peek() {
-                    if token.value == TokenType::CloseParen {
-                        break;
-                    }
-                    parameters.push(self.parse_parameter());
-                    if let Some(token) = self.tokens.peek() {
-                        if token.value == TokenType::Comma {
-                            self.tokens.next();
-                        }
-                    }
-                }
-                self.tokens.next();
-                self.expect(TokenType::ArrowRight);
-                self.expect(TokenType::OpenCurly);
-                let value = self.parse_term().expect("value expected");
-                let close = self.expect(TokenType::CloseCurly);
-                return Some(Term {
-                    value: TermType::Function {
-                        value: Box::new(value),
-                        parameters,
-                    },
-                    location: token.location.with_end(close.location.end),
+            TokenType::BoolLiteral { value } => {
+                let location = token.location.clone();
+                let value = *value;
+                self.tokens.next().unwrap().unwrap();
+                return Ok(Term {
+                    value: TermType::Bool { value },
+                    location,
                 });
             }
-            TokenType::If => todo!(),
-            TokenType::Else => todo!(),
-            TokenType::Identifier { name } => todo!(),
-            TokenType::Equal => todo!(),
-            TokenType::DoubleEqual => todo!(),
-            TokenType::NotEqual => todo!(),
-            TokenType::ArrowRight => todo!(),
-            TokenType::OpenCurly => todo!(),
-            TokenType::CloseCurly => todo!(),
-            TokenType::OpenParen => todo!(),
-            TokenType::CloseParen => todo!(),
-            TokenType::IntLiteral { value } => todo!(),
-            TokenType::StringLiteral { value } => todo!(),
-            TokenType::LessThan => todo!(),
-            TokenType::LessOrEqualThan => todo!(),
-            TokenType::GreaterThan => todo!(),
-            TokenType::GreaterOrEqualThan => todo!(),
-            TokenType::Plus => todo!(),
-            TokenType::Minus => todo!(),
-            TokenType::Star => todo!(),
-            TokenType::Semicolon => todo!(),
-            TokenType::BoolLiteral { value } => todo!(),
-            TokenType::Comma => todo!(),
+            unexpected => todo!("Unexpected token {:?}", unexpected),
+        }
+    }
+
+    fn parse_parameter(&mut self) -> Result<Parameter<'a>, ParserError> {
+        let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)??;
+        match token.value {
+            TokenType::Identifier { name } => Ok(Parameter {
+                text: name.to_string(),
+                location: token.location,
+            }),
+            unexpected => Err(ParserError::UnexpectedToken {
+                got: unexpected,
+                expected: TokenType::Identifier {
+                    name: "".to_string(),
+                },
+                location: token.location.start,
+            }),
+        }
+    }
+
+    fn expect_token(&mut self, expected: TokenType) -> Result<Token<'a>, ParserError> {
+        let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)??;
+        if token.value == expected {
+            return Ok(token);
+        } else {
+            return Err(ParserError::UnexpectedToken {
+                got: token.value,
+                expected,
+                location: token.location.start,
+            });
+        }
+    }
+
+    fn optional_expect_token(
+        &mut self,
+        expected: TokenType,
+    ) -> Result<Option<Token<'a>>, ParserError> {
+        let Some(token) = self.tokens.peek() else {
+            return Ok(None);
+        };
+        let token = token.as_ref().map_err(|e| ParserError::from(*e))?;
+        if token.value == expected {
+            let token = self.tokens.next().unwrap().unwrap();
+            return Ok(Some(token));
+        } else {
+            return Ok(None);
         }
     }
 }
 
-pub fn parse_file<'a, T: Iterator<Item = Token<'a>>>(tokens: T) -> File<'a> {
+pub fn parse_file<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>>(
+    tokens: T,
+) -> Result<File<'a>, ParserError> {
     let mut parser = Parser {
         tokens: tokens.peekable(),
     };
-    return parser.parse();
+    return parser.parse_file();
 }

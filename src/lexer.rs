@@ -1,4 +1,5 @@
 use std::iter::Peekable;
+use thiserror::Error;
 
 use crate::common::Location;
 
@@ -9,6 +10,9 @@ pub enum TokenType {
     If,
     Else,
     Identifier { name: String },
+    IntLiteral { value: i32 },
+    StringLiteral { value: String },
+    BoolLiteral { value: bool },
     Equal,
     DoubleEqual,
     NotEqual,
@@ -17,8 +21,6 @@ pub enum TokenType {
     CloseCurly,
     OpenParen,
     CloseParen,
-    IntLiteral { value: i32 },
-    StringLiteral { value: String },
     LessThan,
     LessOrEqualThan,
     GreaterThan,
@@ -27,7 +29,6 @@ pub enum TokenType {
     Minus,
     Star,
     Semicolon,
-    BoolLiteral { value: bool },
     Comma,
 }
 
@@ -43,8 +44,28 @@ pub struct Lexer<'a, T: Iterator<Item = char>> {
     current_position: usize,
 }
 
+impl<'a, T: Iterator<Item = char>> Lexer<'a, T> {
+    pub fn new(input: T, filename: &'a str) -> Self {
+        Lexer {
+            filename,
+            inner: input.peekable(),
+            current_position: 0,
+        }
+    }
+}
+
+#[derive(Error, Debug, Copy, Clone)]
+pub enum LexerError {
+    #[error("Expected '=' after '!' at {position}, found '{c}'")]
+    UnexpectedCharAfterBang { c: char, position: usize },
+    #[error("Unexpected EOF at {position}")]
+    UnexpectedEOF { position: usize },
+    #[error("Unknown char '{c}' at {position}")]
+    UnknownChar { c: char, position: usize },
+}
+
 impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
-    type Item = Token<'a>;
+    type Item = Result<Token<'a>, LexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut end = self.current_position;
@@ -170,7 +191,13 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                             end += 1;
                             TokenType::NotEqual
                         }
-                        _ => panic!("Expected '=' after '!' in position {}", end),
+                        Some(&other) => {
+                            return Some(Err(LexerError::UnexpectedCharAfterBang {
+                                c: other,
+                                position: end,
+                            }))
+                        }
+                        None => return Some(Err(LexerError::UnexpectedEOF { position: end })),
                     }
                 }
                 ',' => {
@@ -181,7 +208,12 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                     self.current_position += 1;
                     return self.next();
                 }
-                unknown => panic!("Unknown char: {}", unknown),
+                unknown => {
+                    return Some(Err(LexerError::UnknownChar {
+                        c: unknown,
+                        position: end,
+                    }))
+                }
             };
             let token = Token {
                 value,
@@ -192,17 +224,16 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                 },
             };
             self.current_position = end;
-            return Some(token);
+            return Some(Ok(token));
         }
         return None;
     }
 }
 
-pub fn tokens<T: Iterator<Item = char>>(input: T, filename: &str) -> impl Iterator<Item = Token> {
-    let lexer = Lexer {
-        filename,
-        inner: input.peekable(),
-        current_position: 0,
-    };
+pub fn tokens<T: Iterator<Item = char>>(
+    input: T,
+    filename: &str,
+) -> impl Iterator<Item = Result<Token, LexerError>> {
+    let lexer = Lexer::new(input, filename);
     return lexer;
 }
