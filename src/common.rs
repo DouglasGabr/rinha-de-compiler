@@ -14,3 +14,8 @@ impl<'a> Location<'a> {
         };
     }
 }
+
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}

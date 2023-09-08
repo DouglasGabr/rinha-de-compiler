@@ -1,4 +1,7 @@
-use std::iter::Peekable;
+use std::{
+    fmt::{Display, Formatter},
+    iter::Peekable,
+};
 use thiserror::Error;
 
 use crate::common::Location;
@@ -28,8 +31,52 @@ pub enum TokenType {
     Plus,
     Minus,
     Star,
+    Slash,
+    Percent,
     Semicolon,
     Comma,
+    Ampersand,
+    Pipe,
+    And,
+    Or,
+}
+
+impl Display for TokenType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenType::Let => write!(f, "let"),
+            TokenType::Fn => write!(f, "fn"),
+            TokenType::If => write!(f, "if"),
+            TokenType::Else => write!(f, "else"),
+            TokenType::Identifier { name } => write!(f, "{}", name),
+            TokenType::IntLiteral { value } => write!(f, "{}", value),
+            TokenType::StringLiteral { value } => write!(f, "{}", value),
+            TokenType::BoolLiteral { value } => write!(f, "{}", value),
+            TokenType::Equal => write!(f, "="),
+            TokenType::DoubleEqual => write!(f, "=="),
+            TokenType::NotEqual => write!(f, "!="),
+            TokenType::ArrowRight => write!(f, "=>"),
+            TokenType::OpenCurly => write!(f, "{{"),
+            TokenType::CloseCurly => write!(f, "}}"),
+            TokenType::OpenParen => write!(f, "("),
+            TokenType::CloseParen => write!(f, ")"),
+            TokenType::LessThan => write!(f, "<"),
+            TokenType::LessOrEqualThan => write!(f, "<="),
+            TokenType::GreaterThan => write!(f, ">"),
+            TokenType::GreaterOrEqualThan => write!(f, ">="),
+            TokenType::Plus => write!(f, "+"),
+            TokenType::Minus => write!(f, "-"),
+            TokenType::Star => write!(f, "*"),
+            TokenType::Semicolon => write!(f, ";"),
+            TokenType::Comma => write!(f, ","),
+            TokenType::Slash => write!(f, "/"),
+            TokenType::Percent => write!(f, "%"),
+            TokenType::Ampersand => write!(f, "&"),
+            TokenType::Pipe => write!(f, "|"),
+            TokenType::And => write!(f, "&&"),
+            TokenType::Or => write!(f, "||"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -167,6 +214,28 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                         _ => TokenType::GreaterThan,
                     }
                 }
+                '&' => {
+                    end += 1;
+                    match self.inner.peek() {
+                        Some(&'&') => {
+                            self.inner.next();
+                            end += 1;
+                            TokenType::And
+                        }
+                        _ => TokenType::Ampersand,
+                    }
+                }
+                '|' => {
+                    end += 1;
+                    match self.inner.peek() {
+                        Some(&'|') => {
+                            self.inner.next();
+                            end += 1;
+                            TokenType::Or
+                        }
+                        _ => TokenType::Pipe,
+                    }
+                }
                 '+' => {
                     end += 1;
                     TokenType::Plus
@@ -182,6 +251,14 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                 '*' => {
                     end += 1;
                     TokenType::Star
+                }
+                '/' => {
+                    end += 1;
+                    TokenType::Slash
+                }
+                '%' => {
+                    end += 1;
+                    TokenType::Percent
                 }
                 '!' => {
                     end += 1;

@@ -3,7 +3,7 @@ use std::iter::Peekable;
 use thiserror::Error;
 
 use crate::{
-    common::Location,
+    common::{Either, Location},
     lexer::{LexerError, Token, TokenType},
 };
 
@@ -31,6 +31,13 @@ pub struct Parameter<'a> {
 }
 
 #[derive(Debug)]
+struct Binary<'a> {
+    lhs: Box<Term<'a>>,
+    op: BinaryOp,
+    rhs: Box<Term<'a>>,
+}
+
+#[derive(Debug)]
 pub enum TermType<'a> {
     Int {
         value: i32,
@@ -42,11 +49,7 @@ pub enum TermType<'a> {
         callee: Box<Term<'a>>,
         arguments: Vec<Term<'a>>,
     },
-    Binary {
-        lhs: Box<Term<'a>>,
-        op: BinaryOp,
-        rhs: Box<Term<'a>>,
-    },
+    Binary(Binary<'a>),
     Function {
         value: Box<Term<'a>>,
         parameters: Vec<Parameter<'a>>,
@@ -105,12 +108,14 @@ pub enum ParserError {
     UnexpectedEOF,
     #[error("Lexer error")]
     LexerError(#[from] LexerError),
-    #[error("Expected token {expected:?} at {location}, got {got:?}")]
+    #[error("Expected token '{expected}' at {location}, got '{got}'")]
     UnexpectedToken {
         expected: TokenType,
         got: TokenType,
         location: usize,
     },
+    #[error("Invalid token '{token}' at {location}")]
+    InvalidToken { token: TokenType, location: usize },
 }
 
 impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
@@ -134,7 +139,7 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
         match &token.value {
             TokenType::Let => {
                 let location = token.location.clone();
-                self.tokens.next().unwrap().unwrap();
+                self.tokens.next();
                 let name = self.parse_parameter()?;
                 self.expect_token(TokenType::Equal)?;
                 let value = self.parse_term()?;
@@ -161,13 +166,136 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
             TokenType::BoolLiteral { value } => {
                 let location = token.location.clone();
                 let value = *value;
-                self.tokens.next().unwrap().unwrap();
+                self.tokens.next();
                 return Ok(Term {
                     value: TermType::Bool { value },
                     location,
                 });
             }
-            unexpected => todo!("Unexpected token {:?}", unexpected),
+            TokenType::If => {
+                let location = token.location.clone();
+                self.tokens.next();
+                self.expect_token(TokenType::OpenParen)?;
+                let condition = self.parse_term()?;
+                self.expect_token(TokenType::CloseParen)?;
+                self.expect_token(TokenType::OpenCurly)?;
+                let then = self.parse_term()?;
+                self.expect_token(TokenType::CloseCurly)?;
+                self.expect_token(TokenType::Else)?;
+                self.expect_token(TokenType::OpenCurly)?;
+                let otherwise = self.parse_term()?;
+                let close = self.expect_token(TokenType::CloseCurly)?;
+                return Ok(Term {
+                    value: TermType::If {
+                        condition: Box::new(condition),
+                        then: Box::new(then),
+                        otherwise: Box::new(otherwise),
+                    },
+                    location: location.with_end(close.location.end),
+                });
+            }
+            TokenType::Identifier { name } => {
+                let name = name.clone();
+                let location = token.location.clone();
+                match name.as_ref() {
+                    "print" => {
+                        self.tokens.next();
+                        self.expect_token(TokenType::OpenParen)?;
+                        let value = self.parse_term()?;
+                        let close = self.expect_token(TokenType::CloseParen)?;
+                        return Ok(Term {
+                            value: TermType::Print {
+                                value: Box::new(value),
+                            },
+                            location: location.with_end(close.location.end),
+                        });
+                    }
+                    "first" => {
+                        self.tokens.next();
+                        self.expect_token(TokenType::OpenParen)?;
+                        let value = self.parse_term()?;
+                        let close = self.expect_token(TokenType::CloseParen)?;
+                        return Ok(Term {
+                            value: TermType::First {
+                                value: Box::new(value),
+                            },
+                            location: location.with_end(close.location.end),
+                        });
+                    }
+                    "second" => {
+                        self.tokens.next();
+                        self.expect_token(TokenType::OpenParen)?;
+                        let value = self.parse_term()?;
+                        let close = self.expect_token(TokenType::CloseParen)?;
+                        return Ok(Term {
+                            value: TermType::Second {
+                                value: Box::new(value),
+                            },
+                            location: location.with_end(close.location.end),
+                        });
+                    }
+                    _ => todo!("other identifiers like {}", name),
+                }
+            }
+            TokenType::OpenParen => {
+                let location = token.location.clone();
+                self.tokens.next();
+                let first = self.parse_term()?;
+                self.expect_token(TokenType::Comma)?;
+                let second = self.parse_term()?;
+                let close = self.expect_token(TokenType::CloseParen)?;
+                return Ok(Term {
+                    value: TermType::Tuple {
+                        first: Box::new(first),
+                        second: Box::new(second),
+                    },
+                    location: location.with_end(close.location.end),
+                });
+            }
+            TokenType::StringLiteral { value } => {
+                let location = token.location.clone();
+                let value = value.clone();
+                self.tokens.next();
+                match self.try_parse_binary(Term {
+                    value: TermType::Str { value },
+                    location,
+                })? {
+                    Either::Left(term) => Ok(term),
+                    Either::Right(binary) => {
+                        let location = binary.lhs.location.with_end(binary.rhs.location.end);
+                        return Ok(Term {
+                            value: TermType::Binary(binary),
+                            location,
+                        });
+                    }
+                }
+            }
+            TokenType::IntLiteral { value } => {
+                let location = token.location.clone();
+                let value = *value;
+                self.tokens.next();
+                match self.try_parse_binary(Term {
+                    value: TermType::Int { value },
+                    location,
+                })? {
+                    Either::Left(term) => Ok(term),
+                    Either::Right(binary) => {
+                        let location = binary.lhs.location.with_end(binary.rhs.location.end);
+                        return Ok(Term {
+                            value: TermType::Binary(binary),
+                            location,
+                        });
+                    }
+                }
+            }
+            TokenType::Else | TokenType::CloseParen => {
+                let token = self.tokens.next().unwrap().unwrap();
+                return Err(ParserError::InvalidToken {
+                    token: token.value,
+                    location: token.location.start,
+                });
+            }
+            unexpected => todo!("token {:?}", unexpected),
         }
     }
 
@@ -186,6 +314,39 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                 location: token.location.start,
             }),
         }
+    }
+
+    fn try_parse_binary(
+        &mut self,
+        lhs: Term<'a>,
+    ) -> Result<Either<Term<'a>, Binary<'a>>, ParserError> {
+        let op = match self.tokens.peek() {
+            Some(Ok(token)) => match token.value {
+                TokenType::Plus => BinaryOp::Add,
+                TokenType::Minus => BinaryOp::Sub,
+                TokenType::Star => BinaryOp::Mul,
+                TokenType::Slash => BinaryOp::Div,
+                TokenType::Percent => BinaryOp::Rem,
+                TokenType::DoubleEqual => BinaryOp::Eq,
+                TokenType::NotEqual => BinaryOp::Neq,
+                TokenType::LessThan => BinaryOp::Lt,
+                TokenType::GreaterThan => BinaryOp::Gt,
+                TokenType::LessOrEqualThan => BinaryOp::Lte,
+                TokenType::GreaterOrEqualThan => BinaryOp::Gte,
+                TokenType::And => BinaryOp::And,
+                TokenType::Or => BinaryOp::Or,
+                _ => return Ok(Either::Left(lhs)),
+            },
+            Some(Err(e)) => return Err(ParserError::from(*e)),
+            _ => return Ok(Either::Left(lhs)),
+        };
+        self.tokens.next();
+        let rhs = self.parse_term()?;
+        return Ok(Either::Right(Binary {
+            lhs: Box::new(lhs),
+            op,
+            rhs: Box::new(rhs),
+        }));
     }
 
     fn expect_token(&mut self, expected: TokenType) -> Result<Token<'a>, ParserError> {
