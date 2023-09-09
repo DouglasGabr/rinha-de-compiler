@@ -38,6 +38,12 @@ struct Binary<'a> {
 }
 
 #[derive(Debug)]
+struct Call<'a> {
+    callee: Box<Term<'a>>,
+    arguments: Vec<Term<'a>>,
+}
+
+#[derive(Debug)]
 pub enum TermType<'a> {
     Int {
         value: i32,
@@ -45,10 +51,7 @@ pub enum TermType<'a> {
     Str {
         value: String,
     },
-    Call {
-        callee: Box<Term<'a>>,
-        arguments: Vec<Term<'a>>,
-    },
+    Call(Call<'a>),
     Binary(Binary<'a>),
     Function {
         value: Box<Term<'a>>,
@@ -234,7 +237,40 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                             location: location.with_end(close.location.end),
                         });
                     }
-                    _ => todo!("other identifiers like {}", name),
+                    func_name => {
+                        self.tokens.next();
+                        let term = Term {
+                            value: TermType::Var {
+                                text: func_name.to_string(),
+                            },
+                            location,
+                        };
+                        match self.try_parse_call(term)? {
+                            Either::Left(term) => match self.try_parse_binary(term)? {
+                                Either::Left(term) => return Ok(term),
+                                Either::Right(binary) => {
+                                    let location =
+                                        binary.lhs.location.with_end(binary.rhs.location.end);
+                                    return Ok(Term {
+                                        value: TermType::Binary(binary),
+                                        location,
+                                    });
+                                }
+                            },
+                            Either::Right(call) => {
+                                let location = call.callee.location.with_end(
+                                    call.arguments
+                                        .last()
+                                        .map(|x| x.location.end)
+                                        .unwrap_or(call.callee.location.end),
+                                );
+                                return Ok(Term {
+                                    value: TermType::Call(call),
+                                    location,
+                                });
+                            }
+                        }
+                    }
                 }
             }
             TokenType::OpenParen => {
@@ -287,6 +323,30 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                         });
                     }
                 }
+            }
+            TokenType::Fn => {
+                let location = token.location.clone();
+                self.tokens.next();
+                self.expect_token(TokenType::OpenParen)?;
+                let mut parameters = vec![];
+                while self.optional_expect_token(TokenType::CloseParen)?.is_none() {
+                    parameters.push(self.parse_parameter()?);
+                    if self.optional_expect_token(TokenType::Comma)?.is_none() {
+                        self.expect_token(TokenType::CloseParen)?;
+                        break;
+                    }
+                }
+                self.expect_token(TokenType::ArrowRight)?;
+                self.expect_token(TokenType::OpenCurly)?;
+                let value = self.parse_term()?;
+                let close = self.expect_token(TokenType::CloseCurly)?;
+                return Ok(Term {
+                    value: TermType::Function {
+                        value: Box::new(value),
+                        parameters,
+                    },
+                    location: location.with_end(close.location.end),
+                });
             }
             TokenType::Else | TokenType::CloseParen => {
                 let token = self.tokens.next().unwrap().unwrap();
@@ -347,6 +407,34 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
             op,
             rhs: Box::new(rhs),
         }));
+    }
+
+    fn try_parse_call(
+        &mut self,
+        callee: Term<'a>,
+    ) -> Result<Either<Term<'a>, Call<'a>>, ParserError> {
+        match self.tokens.peek() {
+            Some(Ok(token)) => match token.value {
+                TokenType::OpenParen => {
+                    self.tokens.next();
+                    let mut arguments = vec![];
+                    while self.optional_expect_token(TokenType::CloseParen)?.is_none() {
+                        arguments.push(self.parse_term()?);
+                        if self.optional_expect_token(TokenType::Comma)?.is_none() {
+                            self.expect_token(TokenType::CloseParen)?;
+                            break;
+                        }
+                    }
+                    return Ok(Either::Right(Call {
+                        callee: Box::new(callee),
+                        arguments,
+                    }));
+                }
+                _ => return Ok(Either::Left(callee)),
+            },
+            Some(Err(e)) => return Err(ParserError::from(*e)),
+            _ => return Ok(Either::Left(callee)),
+        }
     }
 
     fn expect_token(&mut self, expected: TokenType) -> Result<Token<'a>, ParserError> {
