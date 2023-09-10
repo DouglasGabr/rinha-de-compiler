@@ -245,31 +245,8 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                             },
                             location,
                         };
-                        match self.try_parse_call(term)? {
-                            Either::Left(term) => match self.try_parse_binary(term)? {
-                                Either::Left(term) => return Ok(term),
-                                Either::Right(binary) => {
-                                    let location =
-                                        binary.lhs.location.with_end(binary.rhs.location.end);
-                                    return Ok(Term {
-                                        value: TermType::Binary(binary),
-                                        location,
-                                    });
-                                }
-                            },
-                            Either::Right(call) => {
-                                let location = call.callee.location.with_end(
-                                    call.arguments
-                                        .last()
-                                        .map(|x| x.location.end)
-                                        .unwrap_or(call.callee.location.end),
-                                );
-                                return Ok(Term {
-                                    value: TermType::Call(call),
-                                    location,
-                                });
-                            }
-                        }
+                        let lhs = self.try_parse_call(term)?;
+                        return self.try_parse_binary(lhs);
                     }
                 }
             }
@@ -277,52 +254,41 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                 let location = token.location.clone();
                 self.tokens.next();
                 let first = self.parse_term()?;
-                self.expect_token(TokenType::Comma)?;
-                let second = self.parse_term()?;
-                let close = self.expect_token(TokenType::CloseParen)?;
-                return Ok(Term {
-                    value: TermType::Tuple {
-                        first: Box::new(first),
-                        second: Box::new(second),
-                    },
-                    location: location.with_end(close.location.end),
-                });
+                let lhs = match self.optional_expect_token(TokenType::Comma)? {
+                    Some(_) => {
+                        let second = self.parse_term()?;
+                        let close = self.expect_token(TokenType::CloseParen)?;
+                        Term {
+                            value: TermType::Tuple {
+                                first: Box::new(first),
+                                second: Box::new(second),
+                            },
+                            location: location.with_end(close.location.end),
+                        }
+                    }
+                    None => first,
+                };
+                return self.try_parse_binary(lhs);
             }
             TokenType::StringLiteral { value } => {
                 let location = token.location.clone();
                 let value = value.clone();
                 self.tokens.next();
-                match self.try_parse_binary(Term {
+                let lhs = Term {
                     value: TermType::Str { value },
                     location,
-                })? {
-                    Either::Left(term) => Ok(term),
-                    Either::Right(binary) => {
-                        let location = binary.lhs.location.with_end(binary.rhs.location.end);
-                        return Ok(Term {
-                            value: TermType::Binary(binary),
-                            location,
-                        });
-                    }
-                }
+                };
+                return self.try_parse_binary(lhs);
             }
             TokenType::IntLiteral { value } => {
                 let location = token.location.clone();
                 let value = *value;
                 self.tokens.next();
-                match self.try_parse_binary(Term {
+                let lhs = Term {
                     value: TermType::Int { value },
                     location,
-                })? {
-                    Either::Left(term) => Ok(term),
-                    Either::Right(binary) => {
-                        let location = binary.lhs.location.with_end(binary.rhs.location.end);
-                        return Ok(Term {
-                            value: TermType::Binary(binary),
-                            location,
-                        });
-                    }
-                }
+                };
+                return self.try_parse_binary(lhs);
             }
             TokenType::Fn => {
                 let location = token.location.clone();
@@ -376,10 +342,7 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
         }
     }
 
-    fn try_parse_binary(
-        &mut self,
-        lhs: Term<'a>,
-    ) -> Result<Either<Term<'a>, Binary<'a>>, ParserError> {
+    fn try_parse_binary(&mut self, lhs: Term<'a>) -> Result<Term<'a>, ParserError> {
         let op = match self.tokens.peek() {
             Some(Ok(token)) => match token.value {
                 TokenType::Plus => BinaryOp::Add,
@@ -395,45 +358,54 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                 TokenType::GreaterOrEqualThan => BinaryOp::Gte,
                 TokenType::And => BinaryOp::And,
                 TokenType::Or => BinaryOp::Or,
-                _ => return Ok(Either::Left(lhs)),
+                _ => return Ok(lhs),
             },
             Some(Err(e)) => return Err(ParserError::from(*e)),
-            _ => return Ok(Either::Left(lhs)),
+            _ => return Ok(lhs),
         };
         self.tokens.next();
         let rhs = self.parse_term()?;
-        return Ok(Either::Right(Binary {
-            lhs: Box::new(lhs),
-            op,
-            rhs: Box::new(rhs),
-        }));
+        let location = lhs.location.with_end(rhs.location.end);
+        return Ok(Term {
+            value: TermType::Binary(Binary {
+                lhs: Box::new(lhs),
+                op,
+                rhs: Box::new(rhs),
+            }),
+            location,
+        });
     }
 
-    fn try_parse_call(
-        &mut self,
-        callee: Term<'a>,
-    ) -> Result<Either<Term<'a>, Call<'a>>, ParserError> {
+    fn try_parse_call(&mut self, callee: Term<'a>) -> Result<Term<'a>, ParserError> {
         match self.tokens.peek() {
             Some(Ok(token)) => match token.value {
                 TokenType::OpenParen => {
                     self.tokens.next();
                     let mut arguments = vec![];
-                    while self.optional_expect_token(TokenType::CloseParen)?.is_none() {
-                        arguments.push(self.parse_term()?);
-                        if self.optional_expect_token(TokenType::Comma)?.is_none() {
-                            self.expect_token(TokenType::CloseParen)?;
-                            break;
+                    let close = loop {
+                        match self.optional_expect_token(TokenType::CloseParen)? {
+                            Some(close) => break close,
+                            None => {
+                                arguments.push(self.parse_term()?);
+                                if self.optional_expect_token(TokenType::Comma)?.is_none() {
+                                    break self.expect_token(TokenType::CloseParen)?;
+                                }
+                            }
                         }
-                    }
-                    return Ok(Either::Right(Call {
-                        callee: Box::new(callee),
-                        arguments,
-                    }));
+                    };
+                    let location = callee.location.with_end(close.location.end);
+                    return Ok(Term {
+                        value: TermType::Call(Call {
+                            callee: Box::new(callee),
+                            arguments,
+                        }),
+                        location,
+                    });
                 }
-                _ => return Ok(Either::Left(callee)),
+                _ => return Ok(callee),
             },
             Some(Err(e)) => return Err(ParserError::from(*e)),
-            _ => return Ok(Either::Left(callee)),
+            _ => return Ok(callee),
         }
     }
 
