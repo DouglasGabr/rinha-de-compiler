@@ -1,0 +1,45 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'rinha-de-compiler'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=rinha-de-compiler",
+          "--package=rinha-de-compiler"
+        ],
+        "filter": {
+          "name": "rinha-de-compiler",
+          "kind": "bin"
+        }
+      },
+      "args": [".\\files\\test.rinha"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in executable 'rinha-de-compiler'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--bin=rinha-de-compiler",
+          "--package=rinha-de-compiler"
+        ],
+        "filter": {
+          "name": "rinha-de-compiler",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

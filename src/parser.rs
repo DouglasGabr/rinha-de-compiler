@@ -268,7 +268,9 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                     }
                     None => first,
                 };
-                return self.try_parse_binary(lhs);
+                let term = self.try_parse_binary(lhs)?;
+                self.expect_token(TokenType::CloseParen)?;
+                return Ok(term);
             }
             TokenType::StringLiteral { value } => {
                 let location = token.location.clone();
