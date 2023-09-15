@@ -1,2 +1,1 @@
-let _ = print ((10 * (14 + 3)));
-print ("hello, world")
+2 + 2 

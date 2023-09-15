@@ -1,6 +1,7 @@
 use std::{
     fmt::{Display, Formatter},
     iter::Peekable,
+    sync::Arc,
 };
 use thiserror::Error;
 
@@ -12,9 +13,9 @@ pub enum TokenType {
     Fn,
     If,
     Else,
-    Identifier { name: String },
+    Identifier { name: Arc<str> },
     IntLiteral { value: i32 },
-    StringLiteral { value: String },
+    StringLiteral { value: Arc<str> },
     BoolLiteral { value: bool },
     Equal,
     DoubleEqual,
@@ -80,21 +81,21 @@ impl Display for TokenType {
 }
 
 #[derive(Debug)]
-pub struct Token<'a> {
+pub struct Token {
     pub value: TokenType,
-    pub location: Location<'a>,
+    pub location: Location,
 }
 
-pub struct Lexer<'a, T: Iterator<Item = char>> {
-    filename: &'a str,
+pub struct Lexer<T: Iterator<Item = char>> {
+    filename: Arc<str>,
     inner: Peekable<T>,
     current_position: usize,
 }
 
-impl<'a, T: Iterator<Item = char>> Lexer<'a, T> {
-    pub fn new(input: T, filename: &'a str) -> Self {
+impl<T: Iterator<Item = char>> Lexer<T> {
+    pub fn new(input: T, filename: &str) -> Self {
         Lexer {
-            filename,
+            filename: filename.into(),
             inner: input.peekable(),
             current_position: 0,
         }
@@ -111,8 +112,8 @@ pub enum LexerError {
     UnknownChar { c: char, position: usize },
 }
 
-impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
-    type Item = Result<Token<'a>, LexerError>;
+impl<T: Iterator<Item = char>> Iterator for Lexer<T> {
+    type Item = Result<Token, LexerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut end = self.current_position;
@@ -148,7 +149,7 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                         "else" => TokenType::Else,
                         "true" => TokenType::BoolLiteral { value: true },
                         "false" => TokenType::BoolLiteral { value: false },
-                        _ => TokenType::Identifier { name },
+                        _ => TokenType::Identifier { name: name.into() },
                     }
                 }
                 '"' => {
@@ -158,7 +159,9 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                     }
                     self.inner.next();
                     end += value.len() + 2;
-                    TokenType::StringLiteral { value }
+                    TokenType::StringLiteral {
+                        value: value.into(),
+                    }
                 }
                 '=' => {
                     end += 1;
@@ -297,7 +300,7 @@ impl<'a, T: Iterator<Item = char>> Iterator for Lexer<'a, T> {
                 location: Location {
                     start: self.current_position,
                     end,
-                    filename: self.filename,
+                    filename: self.filename.clone(),
                 },
             };
             self.current_position = end;

@@ -7,10 +7,12 @@ use anyhow::Result;
 use clap::Parser;
 use lexer::tokens;
 use parser::parse_file;
+use runtime::Runtime;
 
 mod common;
 mod lexer;
 mod parser;
+mod runtime;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -27,8 +29,10 @@ fn main() -> Result<()> {
         .bytes()
         .map(|x| x.expect("invalid byte in file") as char);
 
-    let program = parse_file(tokens(iter, &cli.file));
-    println!("{:#?}", program);
+    let program = parse_file(tokens(iter, &cli.file))?;
+    let mut runtime = Runtime::new();
+    let result = runtime.run(&program);
+    println!("{:?}", result);
 
     return Ok(());
 }

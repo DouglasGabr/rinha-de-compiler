@@ -1,13 +1,13 @@
-use std::iter::Peekable;
+use std::{iter::Peekable, sync::Arc};
 
 use thiserror::Error;
 
 use crate::{
-    common::{Either, Location},
+    common::Location,
     lexer::{LexerError, Token, TokenType},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -24,84 +24,108 @@ pub enum BinaryOp {
     Or,
 }
 
-#[derive(Debug)]
-pub struct Parameter<'a> {
-    text: String,
-    location: Location<'a>,
+trait OpPrecedence {
+    fn precedence(&self) -> u8;
 }
 
-#[derive(Debug)]
-struct Binary<'a> {
-    lhs: Box<Term<'a>>,
-    op: BinaryOp,
-    rhs: Box<Term<'a>>,
+impl OpPrecedence for BinaryOp {
+    fn precedence(&self) -> u8 {
+        match self {
+            BinaryOp::Add => 3,
+            BinaryOp::Sub => 3,
+            BinaryOp::Mul => 4,
+            BinaryOp::Div => 4,
+            BinaryOp::Rem => 4,
+            BinaryOp::Eq => 2,
+            BinaryOp::Neq => 2,
+            BinaryOp::Lt => 2,
+            BinaryOp::Gt => 2,
+            BinaryOp::Lte => 2,
+            BinaryOp::Gte => 2,
+            BinaryOp::And => 1,
+            BinaryOp::Or => 0,
+        }
+    }
 }
 
-#[derive(Debug)]
-struct Call<'a> {
-    callee: Box<Term<'a>>,
-    arguments: Vec<Term<'a>>,
+#[derive(Debug, Clone)]
+pub struct Parameter {
+    pub text: Arc<str>,
+    pub location: Location,
 }
 
-#[derive(Debug)]
-pub enum TermType<'a> {
+#[derive(Debug, Clone)]
+pub struct Binary {
+    pub lhs: Box<Term>,
+    pub op: BinaryOp,
+    pub rhs: Box<Term>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Call {
+    pub callee: Box<Term>,
+    pub arguments: Vec<Term>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TermType {
     Int {
         value: i32,
     },
     Str {
-        value: String,
+        value: Arc<str>,
     },
-    Call(Call<'a>),
-    Binary(Binary<'a>),
+    Call(Call),
+    Binary(Binary),
     Function {
-        value: Box<Term<'a>>,
-        parameters: Vec<Parameter<'a>>,
+        value: Box<Term>,
+        parameters: Vec<Parameter>,
     },
     Let {
-        name: Parameter<'a>,
-        value: Box<Term<'a>>,
-        next: Option<Box<Term<'a>>>,
+        name: Parameter,
+        value: Box<Term>,
+        next: Option<Box<Term>>,
     },
     If {
-        condition: Box<Term<'a>>,
-        then: Box<Term<'a>>,
-        otherwise: Box<Term<'a>>,
+        condition: Box<Term>,
+        then: Box<Term>,
+        otherwise: Box<Term>,
     },
     Print {
-        value: Box<Term<'a>>,
+        value: Box<Term>,
     },
     Tuple {
-        first: Box<Term<'a>>,
-        second: Box<Term<'a>>,
+        first: Box<Term>,
+        second: Box<Term>,
     },
     First {
-        value: Box<Term<'a>>,
+        value: Box<Term>,
     },
     Second {
-        value: Box<Term<'a>>,
+        value: Box<Term>,
     },
     Bool {
         value: bool,
     },
     Var {
-        text: String,
+        text: Arc<str>,
     },
 }
 
-#[derive(Debug)]
-struct Term<'a> {
-    value: TermType<'a>,
-    location: Location<'a>,
+#[derive(Debug, Clone)]
+pub struct Term {
+    pub value: TermType,
+    pub location: Location,
 }
 
 #[derive(Debug)]
-pub struct File<'a> {
-    name: String,
-    expression: Term<'a>,
-    location: Location<'a>,
+pub struct File {
+    pub name: String,
+    pub expression: Term,
+    pub location: Location,
 }
 
-struct Parser<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> {
+struct Parser<T: Iterator<Item = Result<Token, LexerError>>> {
     tokens: Peekable<T>,
 }
 
@@ -121,8 +145,8 @@ pub enum ParserError {
     InvalidToken { token: TokenType, location: usize },
 }
 
-impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
-    fn parse_file(&mut self) -> Result<File<'a>, ParserError> {
+impl<T: Iterator<Item = Result<Token, LexerError>>> Parser<T> {
+    fn parse_file(&mut self) -> Result<File, ParserError> {
         let term = self.parse_term()?;
         let location = term.location.clone();
         return Ok(File {
@@ -132,7 +156,7 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
         });
     }
 
-    fn parse_term(&mut self) -> Result<Term<'a>, ParserError> {
+    fn parse_expression(&mut self, primary: bool) -> Result<Term, ParserError> {
         let token = self
             .tokens
             .peek()
@@ -241,12 +265,16 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                         self.tokens.next();
                         let term = Term {
                             value: TermType::Var {
-                                text: func_name.to_string(),
+                                text: func_name.into(),
                             },
                             location,
                         };
                         let lhs = self.try_parse_call(term)?;
-                        return self.try_parse_binary(lhs);
+                        if primary {
+                            return Ok(lhs);
+                        } else {
+                            return self.try_parse_binary(lhs);
+                        }
                     }
                 }
             }
@@ -258,17 +286,22 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                     Some(_) => {
                         let second = self.parse_term()?;
                         let close = self.expect_token(TokenType::CloseParen)?;
-                        Term {
+                        return Ok(Term {
                             value: TermType::Tuple {
                                 first: Box::new(first),
                                 second: Box::new(second),
                             },
                             location: location.with_end(close.location.end),
-                        }
+                        });
                     }
                     None => first,
                 };
-                let term = self.try_parse_binary(lhs)?;
+
+                let term = if primary {
+                    lhs
+                } else {
+                    self.try_parse_binary(lhs)?
+                };
                 self.expect_token(TokenType::CloseParen)?;
                 return Ok(term);
             }
@@ -280,7 +313,11 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                     value: TermType::Str { value },
                     location,
                 };
-                return self.try_parse_binary(lhs);
+                if primary {
+                    return Ok(lhs);
+                } else {
+                    return self.try_parse_binary(lhs);
+                }
             }
             TokenType::IntLiteral { value } => {
                 let location = token.location.clone();
@@ -290,7 +327,11 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
                     value: TermType::Int { value },
                     location,
                 };
-                return self.try_parse_binary(lhs);
+                if primary {
+                    return Ok(lhs);
+                } else {
+                    return self.try_parse_binary(lhs);
+                }
             }
             TokenType::Fn => {
                 let location = token.location.clone();
@@ -327,58 +368,82 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
         }
     }
 
-    fn parse_parameter(&mut self) -> Result<Parameter<'a>, ParserError> {
+    fn parse_term(&mut self) -> Result<Term, ParserError> {
+        return self.parse_expression(false);
+    }
+
+    fn parse_parameter(&mut self) -> Result<Parameter, ParserError> {
         let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)??;
         match token.value {
             TokenType::Identifier { name } => Ok(Parameter {
-                text: name.to_string(),
+                text: name.into(),
                 location: token.location,
             }),
             unexpected => Err(ParserError::UnexpectedToken {
                 got: unexpected,
-                expected: TokenType::Identifier {
-                    name: "".to_string(),
-                },
+                expected: TokenType::Identifier { name: "".into() },
                 location: token.location.start,
             }),
         }
     }
 
-    fn try_parse_binary(&mut self, lhs: Term<'a>) -> Result<Term<'a>, ParserError> {
-        let op = match self.tokens.peek() {
+    fn peek_op(&mut self) -> Result<Option<BinaryOp>, ParserError> {
+        match self.tokens.peek() {
             Some(Ok(token)) => match token.value {
-                TokenType::Plus => BinaryOp::Add,
-                TokenType::Minus => BinaryOp::Sub,
-                TokenType::Star => BinaryOp::Mul,
-                TokenType::Slash => BinaryOp::Div,
-                TokenType::Percent => BinaryOp::Rem,
-                TokenType::DoubleEqual => BinaryOp::Eq,
-                TokenType::NotEqual => BinaryOp::Neq,
-                TokenType::LessThan => BinaryOp::Lt,
-                TokenType::GreaterThan => BinaryOp::Gt,
-                TokenType::LessOrEqualThan => BinaryOp::Lte,
-                TokenType::GreaterOrEqualThan => BinaryOp::Gte,
-                TokenType::And => BinaryOp::And,
-                TokenType::Or => BinaryOp::Or,
-                _ => return Ok(lhs),
+                TokenType::Plus => Ok(Some(BinaryOp::Add)),
+                TokenType::Minus => Ok(Some(BinaryOp::Sub)),
+                TokenType::Star => Ok(Some(BinaryOp::Mul)),
+                TokenType::Slash => Ok(Some(BinaryOp::Div)),
+                TokenType::Percent => Ok(Some(BinaryOp::Rem)),
+                TokenType::DoubleEqual => Ok(Some(BinaryOp::Eq)),
+                TokenType::NotEqual => Ok(Some(BinaryOp::Neq)),
+                TokenType::LessThan => Ok(Some(BinaryOp::Lt)),
+                TokenType::GreaterThan => Ok(Some(BinaryOp::Gt)),
+                TokenType::LessOrEqualThan => Ok(Some(BinaryOp::Lte)),
+                TokenType::GreaterOrEqualThan => Ok(Some(BinaryOp::Gte)),
+                TokenType::And => Ok(Some(BinaryOp::And)),
+                TokenType::Or => Ok(Some(BinaryOp::Or)),
+                _ => Ok(None),
             },
-            Some(Err(e)) => return Err(ParserError::from(*e)),
-            _ => return Ok(lhs),
-        };
-        self.tokens.next();
-        let rhs = self.parse_term()?;
-        let location = lhs.location.with_end(rhs.location.end);
-        return Ok(Term {
-            value: TermType::Binary(Binary {
-                lhs: Box::new(lhs),
-                op,
-                rhs: Box::new(rhs),
-            }),
-            location,
-        });
+            Some(Err(e)) => Err(ParserError::from(*e)),
+            _ => Ok(None),
+        }
     }
 
-    fn try_parse_call(&mut self, callee: Term<'a>) -> Result<Term<'a>, ParserError> {
+    fn try_parse_binary(&mut self, lhs: Term) -> Result<Term, ParserError> {
+        fn try_parse_binary_inner<T: Iterator<Item = Result<Token, LexerError>>>(
+            parser: &mut Parser<T>,
+            mut lhs: Term,
+            min_precedence: u8,
+        ) -> Result<Term, ParserError> {
+            while let Some(op) = parser.peek_op()? {
+                if op.precedence() < min_precedence {
+                    break;
+                }
+                parser.tokens.next();
+                let mut rhs = parser.parse_expression(true)?;
+                while let Some(next_op) = parser.peek_op()? {
+                    if next_op.precedence() <= op.precedence() {
+                        break;
+                    }
+                    rhs = try_parse_binary_inner(parser, rhs, op.precedence() + 1)?;
+                }
+                let location = lhs.location.with_end(rhs.location.end);
+                lhs = Term {
+                    value: TermType::Binary(Binary {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs: Box::new(rhs),
+                    }),
+                    location,
+                };
+            }
+            return Ok(lhs);
+        }
+        return try_parse_binary_inner(self, lhs, 0);
+    }
+
+    fn try_parse_call(&mut self, callee: Term) -> Result<Term, ParserError> {
         match self.tokens.peek() {
             Some(Ok(token)) => match token.value {
                 TokenType::OpenParen => {
@@ -411,7 +476,7 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
         }
     }
 
-    fn expect_token(&mut self, expected: TokenType) -> Result<Token<'a>, ParserError> {
+    fn expect_token(&mut self, expected: TokenType) -> Result<Token, ParserError> {
         let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)??;
         if token.value == expected {
             return Ok(token);
@@ -424,10 +489,7 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
         }
     }
 
-    fn optional_expect_token(
-        &mut self,
-        expected: TokenType,
-    ) -> Result<Option<Token<'a>>, ParserError> {
+    fn optional_expect_token(&mut self, expected: TokenType) -> Result<Option<Token>, ParserError> {
         let Some(token) = self.tokens.peek() else {
             return Ok(None);
         };
@@ -441,9 +503,9 @@ impl<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>> Parser<'a, T> {
     }
 }
 
-pub fn parse_file<'a, T: Iterator<Item = Result<Token<'a>, LexerError>>>(
+pub fn parse_file<T: Iterator<Item = Result<Token, LexerError>>>(
     tokens: T,
-) -> Result<File<'a>, ParserError> {
+) -> Result<File, ParserError> {
     let mut parser = Parser {
         tokens: tokens.peekable(),
     };

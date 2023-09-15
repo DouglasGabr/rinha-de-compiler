@@ -1,16 +1,18 @@
-#[derive(Debug, Clone, Copy)]
-pub struct Location<'a> {
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub struct Location {
     pub start: usize,
     pub end: usize,
-    pub filename: &'a str,
+    pub filename: Arc<str>,
 }
 
-impl<'a> Location<'a> {
+impl Location {
     pub fn with_end(&self, end: usize) -> Self {
         return Location {
             start: self.start,
             end,
-            filename: self.filename,
+            filename: self.filename.clone(),
         };
     }
 }
