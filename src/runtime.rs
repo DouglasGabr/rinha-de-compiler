@@ -12,7 +12,7 @@ pub enum Value {
     Str(String),
     Bool(bool),
     Tuple(Box<Value>, Box<Value>),
-    Function(Vec<Arc<str>>, Box<Term>),
+    Function(Arc<[Arc<str>]>, Box<Term>),
 }
 
 impl PartialEq for Value {
@@ -147,14 +147,25 @@ impl Runtime {
             TermType::Int { value } => Value::Int(*value),
             TermType::Str { value } => Value::Str(value.to_string()),
             TermType::Call(Call { callee, arguments }) => {
-                let callee = self.run_expression(callee);
+                let callee_val = self.run_expression(callee);
                 let arguments: Vec<Value> =
                     arguments.iter().map(|a| self.run_expression(a)).collect();
-                match callee {
+                match callee_val {
                     Value::Function(parameters, body) => {
-                        self.stack.push(StackFrame {
-                            variables: parameters.iter().cloned().zip(arguments).collect(),
-                        });
+                        let mut variables: HashMap<Arc<str>, Value> = HashMap::new();
+                        match &callee.value {
+                            TermType::Var { text } => {
+                                variables.insert(
+                                    text.clone(),
+                                    Value::Function(parameters.clone(), body.clone()),
+                                );
+                            }
+                            _ => {}
+                        }
+                        for (parameter, argument) in parameters.iter().zip(arguments.iter()) {
+                            variables.insert(parameter.clone(), argument.clone());
+                        }
+                        self.stack.push(StackFrame { variables });
                         let value = self.run_expression(&body);
                         self.stack.pop();
                         value

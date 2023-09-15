@@ -64,7 +64,7 @@ pub struct Binary {
 #[derive(Debug, Clone)]
 pub struct Call {
     pub callee: Box<Term>,
-    pub arguments: Vec<Term>,
+    pub arguments: Arc<[Term]>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,7 +79,7 @@ pub enum TermType {
     Binary(Binary),
     Function {
         value: Box<Term>,
-        parameters: Vec<Parameter>,
+        parameters: Arc<[Parameter]>,
     },
     Let {
         name: Parameter,
@@ -352,7 +352,7 @@ impl<T: Iterator<Item = Result<Token, LexerError>>> Parser<T> {
                 return Ok(Term {
                     value: TermType::Function {
                         value: Box::new(value),
-                        parameters,
+                        parameters: parameters.into(),
                     },
                     location: location.with_end(close.location.end),
                 });
@@ -464,7 +464,7 @@ impl<T: Iterator<Item = Result<Token, LexerError>>> Parser<T> {
                     return Ok(Term {
                         value: TermType::Call(Call {
                             callee: Box::new(callee),
-                            arguments,
+                            arguments: arguments.into(),
                         }),
                         location,
                     });
